@@ -2,6 +2,37 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
+from tabulate import tabulate
+
+def print_chi_square_table(final_bins, final_ni):
+    table_data = []
+    theoretical_counts = []
+    chi_sq_total = 0
+    
+    for i in range(len(final_ni)):
+        a, b = final_bins[i], final_bins[i+1]
+        obs = final_ni[i]
+        p_i = pareto_cdf(b, lambd, alpha_theory) - pareto_cdf(a, lambd, alpha_theory)
+        expected_n = n * p_i
+        theoretical_counts.append(expected_n)
+        
+        # Обчислення доданку
+        term = ((obs - expected_n)**2) / expected_n if expected_n > 0 else 0
+        chi_sq_total += term
+        
+        # Формуємо рядок: інтервал, спостережувані, теоретичні, внесок у хі-квадрат
+        interval_str = f"[{a:7.4f}, {b:7.4f})"
+        table_data.append([i + 1, interval_str, obs, f"{expected_n:.2f}", f"{term:.4f}"])
+    
+    # Додаємо рядок з сумами
+    table_data.append(["", "РАЗОМ:", sum(final_ni), f"{sum(theoretical_counts):.2f}", f"{chi_sq_total:.4f}"])
+    
+    # Вивід красивої таблиці
+    headers = ["№", "Інтервал [a, b)", "n_i", "np_i^T", "Внесок (chi-sq)"]
+    print("\nСтатистична таблиця перевірки гіпотези:")
+    print(tabulate(table_data, headers=headers, tablefmt="fancy_grid", stralign="center"))
+    
+    return chi_sq_total
 
 # 1. Параметри та генерація
 n = 3000
@@ -43,7 +74,7 @@ limit_95 = x_sorted[int(n * 0.95)] # Відсікаємо 5% екстремал�
 min_x = min(x)
 
 # Початкове розбиття (35 інтервалів до 95-го перцентиля + 1 для "хвоста")
-k_initial = 35
+k_initial = 70
 h = (limit_95 - min_x) / k_initial
 bins = [min_x + i * h for i in range(k_initial)]
 bins.append(max(x)) # Останній інтервал закриває весь "хвіст" до нескінченності
@@ -82,27 +113,11 @@ def pareto_cdf(val, l, a):
     return 1 - (l / val)**a
 
 chi_sq_val = 0
-theoretical_counts = []
-
-print(f"{'Інтервал [a, b)':<25} | {'n_i':<5} | {'np_i^T':<8} | {'Доданок chi^2'}")
-print("-" * 65)
-
-for i in range(len(final_ni)):
-    a, b = final_bins[i], final_bins[i+1]
-    # Теоретична ймовірність p_i = F(b) - F(a)
-    p_i = pareto_cdf(b, lambd, alpha_theory) - pareto_cdf(a, lambd, alpha_theory)
-    expected_n = n * p_i
-    theoretical_counts.append(expected_n)
-    
-    # Доданок (n_i - np_i)^2 / np_i
-    term = ((final_ni[i] - expected_n)**2) / expected_n
-    chi_sq_val += term
-    print(f"[{a:7.4f}, {b:7.4f}) | {final_ni[i]:5} | {expected_n:8.2f} | {term:.4f}")
+chi_sq_val = print_chi_square_table(final_bins, final_ni)
 
 # 5. Перевірка результату
 k_final = len(final_ni)
 # Ступені вільності: k - 1 - q. Ми знаємо параметри генератора, тому q = 0.
-# Якщо ви оцінювали lambda як min(x), то q = 1.
 df = k_final - 1 
 alpha_level = 0.05
 chi_crit = stats.chi2.ppf(1 - alpha_level, df)
@@ -120,17 +135,31 @@ else:
 plt.figure(figsize=(10, 6))
 
 # Гістограма для основної маси даних (до 95 перцентиля)
-plt.hist(x[x < limit_95], bins=30, density=True, alpha=0.6, color='skyblue', label='Емпірична щільність (95%)')
+counts, bins_hist, _ = plt.hist(
+    x[x < limit_95],
+    bins=30,
+    density=False,
+    alpha=0.6,
+    color='skyblue',
+    label='Емпіричні частоти (95%)'
+)
+
+# Ширина інтервалу гістограми
+h = bins_hist[1] - bins_hist[0]
 
 # Теоретична крива щільності f(x) = alpha * lambda^alpha / x^(alpha + 1)
 # При alpha = 1: f(x) = lambda / x^2
 line_x = np.linspace(min_x, limit_95, 500)
-line_y = lambd / (line_x**2)
-plt.plot(line_x, line_y, 'r-', lw=2, label='Теоретична щільність Парето')
+line_y = lambd / (line_x**2) 
+
+#Масштабування до частот
+line_y_scaled = line_y * n * h
+
+plt.plot(line_x, line_y_scaled, 'r-', lw=2, label='Теоретичні частоти Парето')
 
 plt.title(f'Перевірка розподілу (Варіант 9, $\lambda={lambd}$)\n$\chi^2={chi_sq_val:.2f} < \chi^2_{{kp}}={chi_crit:.2f}$')
 plt.xlabel('Значення X')
-plt.ylabel('Щільність')
+plt.ylabel('Частота')
 plt.legend()
 plt.grid(alpha=0.3)
 plt.savefig('lab1_result.png')
