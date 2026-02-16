@@ -4,56 +4,15 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from tabulate import tabulate
 
-def print_chi_square_table(final_bins, final_ni):
-    table_data = []
-    theoretical_counts = []
-    chi_sq_total = 0
-    
-    for i in range(len(final_ni)):
-        a, b = final_bins[i], final_bins[i+1]
-        obs = final_ni[i]
-        p_i = pareto_cdf(b, lambd, alpha_theory) - pareto_cdf(a, lambd, alpha_theory)
-        expected_n = n * p_i
-        theoretical_counts.append(expected_n)
-        
-        # Обчислення доданку
-        term = ((obs - expected_n)**2) / expected_n if expected_n > 0 else 0
-        chi_sq_total += term
-        
-        # Формуємо рядок: інтервал, спостережувані, теоретичні, внесок у хі-квадрат
-        interval_str = f"[{a:7.4f}, {b:7.4f})"
-        table_data.append([i + 1, interval_str, obs, f"{expected_n:.2f}", f"{term:.4f}"])
-    
-    # Додаємо рядок з сумами
-    table_data.append(["", "РАЗОМ:", sum(final_ni), f"{sum(theoretical_counts):.2f}", f"{chi_sq_total:.4f}"])
-    
-    # Вивід красивої таблиці
-    headers = ["№", "Інтервал [a, b)", "n_i", "np_i^T", "Внесок (chi-sq)"]
-    print("\nСтатистична таблиця перевірки гіпотези:")
-    print(tabulate(table_data, headers=headers, tablefmt="fancy_grid", stralign="center"))
-    
-    return chi_sq_total
+# --- Допоміжні функції ---
 
-# 1. Параметри та генерація
-n = 3000
-lambd = 0.01  # Обраний параметр за умовою
-alpha_theory = 1.0  # Теоретичний показник форми для вашого генератора
-
-# Генеруємо xi ~ U(0, 1) та перетворюємо за формулою x = lambda / xi
-seed = int(time.time())
-np.random.seed(seed)
-xi = np.random.uniform(0, 1, n)
-x = lambd / xi
-
-# 2. Ручний розрахунок емпіричних характеристик
-def manual_stats(data):
-    # Середнє значення
+def manual_stats(data, n):
+    """Розрахунок середнього та дисперсії вручну"""
     s = 0
     for val in data:
         s += val
     mean_val = s / n
     
-    # Дисперсія (незміщена)
     v = 0
     for val in data:
         v += (val - mean_val)**2
@@ -61,35 +20,110 @@ def manual_stats(data):
     
     return mean_val, variance_val
 
-mean_emp, var_emp = manual_stats(x)
+def calculate_pareto_params_mle(data):
+    """
+    Оцінка параметрів розподілу Парето методом максимальної правдоподібності (MLE).
+    """
+    n = len(data)
+    # Оцінка xm (scale) - це мінімальне значення вибірки
+    xm_est = np.min(data)
+    
+    # Оцінка alpha (shape) - через логарифмічне рівняння правдоподібності
+    sum_ln = np.sum(np.log(data / xm_est))
+    alpha_est = n / sum_ln
+    
+    return xm_est, alpha_est
+
+def pareto_cdf(val, xm, alpha):
+    """Функція розподілу F(x) = 1 - (xm/x)^alpha"""
+    if val < xm:
+        return 0
+    return 1 - (xm / val)**alpha
+
+def print_chi_square_table(final_bins, final_ni, n, xm_param, alpha_param):
+    """Формування таблиці частот та розрахунок статистики хі-квадрат"""
+    table_data = []
+    theoretical_counts = []
+    chi_sq_total = 0
+    
+    for i in range(len(final_ni)):
+        a, b = final_bins[i], final_bins[i+1]
+        obs = final_ni[i]
+        
+        # Теоретична ймовірність попадання в інтервал
+        p_i = pareto_cdf(b, xm_param, alpha_param) - pareto_cdf(a, xm_param, alpha_param)
+        
+        # Корекція для останнього інтервалу (замикання хвоста)
+        if i == len(final_ni) - 1: 
+             p_i = 1 - pareto_cdf(a, xm_param, alpha_param)
+
+        expected_n = n * p_i
+        theoretical_counts.append(expected_n)
+        
+        # Розрахунок доданку (O - E)^2 / E
+        term = ((obs - expected_n)**2) / expected_n if expected_n > 0 else 0
+        chi_sq_total += term
+        
+        interval_str = f"[{a:7.4f}, {b:7.4f})"
+        table_data.append([i + 1, interval_str, obs, f"{expected_n:.2f}", f"{term:.4f}"])
+    
+    # Підсумковий рядок
+    table_data.append(["", "РАЗОМ:", sum(final_ni), f"{sum(theoretical_counts):.2f}", f"{chi_sq_total:.4f}"])
+    
+    print("\nСтатистична таблиця перевірки гіпотези:")
+    headers = ["№", "Інтервал [a, b)", "n_i", "np_i^T", "Внесок (chi-sq)"]
+    print(tabulate(table_data, headers=headers, tablefmt="fancy_grid", stralign="center"))
+    
+    return chi_sq_total
+
+# --- Основний блок ---
+
+# 1. Генерація даних
+n = 3000
+lambd_gen = 0.01
+
+seed = int(time.time())
+np.random.seed(seed)
+xi = np.random.uniform(0, 1, n)
+# Захист від ділення на нуль
+xi = np.maximum(xi, 1e-10) 
+x = lambd_gen / xi
+
+# 2. Розрахунок емпіричних характеристик (для звіту)
+mean_emp, var_emp = manual_stats(x, n)
 
 print(f"Емпіричне середнє: {mean_emp:.6f}")
 print(f"Емпірична дисперсія: {var_emp:.6f}")
+
+# 3. Визначення параметрів розподілу (Метод ММП)
+xm_calc, alpha_calc = calculate_pareto_params_mle(x)
+
+print("-" * 50)
+print(f"Оцінка параметрів (MLE): x_m = {xm_calc:.6f}, alpha = {alpha_calc:.6f}")
 print("-" * 50)
 
-# 3. Побудова інтервального ряду та перевірка хі-квадрат вручну
-# Для розподілу Парето з довгим хвостом використовуємо 95-й перцентиль як межу для інтервалів
+# 4. Побудова інтервального ряду
 x_sorted = sorted(x)
-limit_95 = x_sorted[int(n * 0.95)] # Відсікаємо 5% екстремальних значень для стабільності інтервалів
+limit_95 = x_sorted[int(n * 0.95)] 
 min_x = min(x)
 
-# Початкове розбиття (35 інтервалів до 95-го перцентиля + 1 для "хвоста")
-k_initial = 70
+# Розбиття на інтервали
+k_initial = 50 
 h = (limit_95 - min_x) / k_initial
 bins = [min_x + i * h for i in range(k_initial)]
-bins.append(max(x)) # Останній інтервал закриває весь "хвіст" до нескінченності
+bins.append(max(x)) 
 
-# Підрахунок частот n_i
+# Підрахунок частот
 frequencies = [0] * (len(bins) - 1)
 for val in x:
     for i in range(len(bins) - 1):
         if bins[i] <= val < bins[i+1]:
             frequencies[i] += 1
             break
-    if val == bins[-1]: # Крайнє значення
+    if val == bins[-1]: 
         frequencies[-1] += 1
 
-# Об'єднання інтервалів, де n_i < 5 (умова застосування хі-квадрат)
+# Об'єднання малочисельних інтервалів
 final_bins = [bins[0]]
 final_ni = []
 current_n = 0
@@ -101,64 +135,47 @@ for i in range(len(frequencies)):
         final_ni.append(current_n)
         current_n = 0
 
-# Якщо останній інтервал після циклу все ще < 5, об'єднуємо його з передостаннім
 if final_ni[-1] < 5 and len(final_ni) > 1:
     last_n = final_ni.pop()
     final_ni[-1] += last_n
     final_bins.pop(-2)
 
-# 4. Розрахунок теоретичних частот np_i та критерію
-# Для Парето F(x) = 1 - (lambda/x)^alpha. Тут alpha = 1.
-def pareto_cdf(val, l, a):
-    return 1 - (l / val)**a
+# 5. Перевірка за критерієм Хі-квадрат
+chi_sq_val = print_chi_square_table(final_bins, final_ni, n, xm_calc, alpha_calc)
 
-chi_sq_val = 0
-chi_sq_val = print_chi_square_table(final_bins, final_ni)
-
-# 5. Перевірка результату
+# 6. Порівняння з критичним значенням
 k_final = len(final_ni)
-# Ступені вільності: k - 1 - q. Ми знаємо параметри генератора, тому q = 0.
-df = k_final - 1 
+q = 2 # Кількість оцінених параметрів (xm, alpha)
+df = k_final - 1 - q
 alpha_level = 0.05
-chi_crit = stats.chi2.ppf(1 - alpha_level, df)
 
-print("-" * 65)
-print(f"Сумарне значення Chi-square: {chi_sq_val:.4f}")
-print(f"Критичне значення (df={df}): {chi_crit:.4f}")
-
-if chi_sq_val < chi_crit:
-    print("РЕЗУЛЬТАТ: Гіпотеза ПРИЙНЯТА (Відповідає розподілу Парето)")
+if df <= 0:
+    print("Помилка: недостатньо інтервалів для перевірки.")
 else:
-    print("РЕЗУЛЬТАТ: Гіпотеза ВІДХИЛЕНА")
+    chi_crit = stats.chi2.ppf(1 - alpha_level, df)
+    print("-" * 65)
+    print(f"Ступені вільності (k-1-2): {df}")
+    print(f"Хі-квадрат розрах.: {chi_sq_val:.4f}")
+    print(f"Хі-квадрат критич.: {chi_crit:.4f}")
 
-# 6. Візуалізація
+    if chi_sq_val < chi_crit:
+        print("РЕЗУЛЬТАТ: Гіпотеза ПРИЙНЯТА")
+    else:
+        print("РЕЗУЛЬТАТ: Гіпотеза ВІДХИЛЕНА")
+
+# 7. Візуалізація
 plt.figure(figsize=(10, 6))
 
-# Гістограма для основної маси даних (до 95 перцентиля)
-counts, bins_hist, _ = plt.hist(
-    x[x < limit_95],
-    bins=30,
-    density=False,
-    alpha=0.6,
-    color='skyblue',
-    label='Емпіричні частоти (95%)'
-)
+# Гістограма
+plt.hist(x[x < limit_95], bins=30, density=False, alpha=0.6, color='skyblue', label='Емпіричні частоти')
 
-# Ширина інтервалу гістограми
-h = bins_hist[1] - bins_hist[0]
+# Теоретична крива MLE
+line_x = np.linspace(xm_calc, limit_95, 1000)   
+line_y = (alpha_calc * (xm_calc**alpha_calc)) / (line_x**(alpha_calc + 1)) * n * (bins[1] - bins[0]) # Масштабування для порівняння з гістограмою
 
-# Теоретична крива щільності f(x) = alpha * lambda^alpha / x^(alpha + 1)
-# При alpha = 1: f(x) = lambda / x^2
-line_x = np.linspace(min_x, limit_95, 500)
-line_y = lambd / (line_x**2) 
-
-#Масштабування до частот
-line_y_scaled = line_y * n * h
-
-plt.plot(line_x, line_y_scaled, 'r-', lw=2, label='Теоретичні частоти Парето')
-
-plt.title(f'Перевірка розподілу (Варіант 9, $\lambda={lambd}$)\n$\chi^2={chi_sq_val:.2f} < \chi^2_{{kp}}={chi_crit:.2f}$')
-plt.xlabel('Значення X')
+plt.plot(line_x, line_y, 'r-', lw=2, label=f'Апроксимація (ММП)')
+plt.title(f'Перевірка розподілу Парето')
+plt.xlabel('X')
 plt.ylabel('Частота')
 plt.legend()
 plt.grid(alpha=0.3)
